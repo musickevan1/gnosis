@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - FLASK_APP=src/app.py
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - DATABASE_URL=sqlite:///instance/app.db
+    command: flask run --host=0.0.0.0
+    networks:
+      - gnosis-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5177:5177"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://backend:5000
+    depends_on:
+      - backend
+    networks:
+      - gnosis-network
+
+  adminer:
+    image: adminer
+    ports:
+      - "8080:8080"
+    networks:
+      - gnosis-network
+
+networks:
+  gnosis-network:
+    driver: bridge
