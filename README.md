@@ -39,10 +39,12 @@ gnosis/
 ├── .gitignore              # Git ignore rules
 ├── Dockerfile              # Backend Dockerfile
 ├── README.md               # Project documentation
-├── app.py                  # Flask application entry point
 ├── docker-compose.yml      # Docker compose configuration
-├── init_db.py             # Database initialization script
 ├── requirements.txt        # Python dependencies
+│
+├── docs/                   # Documentation files
+│   ├── api/               # API documentation
+│   └── guides/            # User and developer guides
 │
 ├── frontend/              # React frontend application
 │   ├── Dockerfile        # Frontend Dockerfile
@@ -56,20 +58,34 @@ gnosis/
 │       ├── services/    # API services
 │       └── theme/       # UI theming
 │
-├── models/               # Database models
-│   ├── __init__.py
-│   ├── database.py      # Database configuration
-│   ├── search_history.py # Search history model
-│   └── user.py          # User model
+├── scripts/              # Utility scripts
+│   └── init_db.py       # Database initialization script
 │
-├── routes/              # API routes
-│   ├── __init__.py
-│   ├── ai_routes.py     # AI-related endpoints
-│   ├── auth_routes.py   # Authentication endpoints
-│   └── learning_routes.py # Learning-related endpoints
+├── src/                  # Backend source code
+│   ├── api/             # API layer
+│   │   └── routes/      # Route definitions
+│   │       ├── ai_routes.py
+│   │       ├── auth_routes.py
+│   │       └── learning_routes.py
+│   │
+│   ├── config/          # Configuration management
+│   │   └── settings.py  # Application settings
+│   │
+│   ├── core/            # Core application code
+│   │   ├── models/      # Database models
+│   │   ├── schemas/     # Data validation schemas
+│   │   ├── middleware/  # Custom middleware
+│   │   └── utils/       # Utility functions
+│   │
+│   ├── services/        # Business logic services
+│   │   ├── ai/         # AI-related services
+│   │   └── auth/       # Authentication services
+│   │
+│   └── app.py          # Application entry point
 │
-└── utils/              # Utility functions
-    └── openai_client.py # OpenAI client configuration
+└── tests/               # Test suite
+    ├── integration/    # Integration tests
+    └── unit/          # Unit tests
 ```
 
 ## Setup and Installation
