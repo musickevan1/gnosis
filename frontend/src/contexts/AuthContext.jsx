@@ -78,12 +78,12 @@ export const AuthProvider = ({ children }) => {
     initializeAuth();
   }, []);
 
-  const login = async (email, password) => {
+  const login = async (username, password) => {
     try {
       setLoading(true);
       setError(null);
       const response = await api.post('/api/auth/login', {
-        email,
+        username,
         password,
       });
       const { token, user: userData } = response.data;

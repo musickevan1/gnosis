@@ -1,12 +1,14 @@
+"""Flask application initialization and configuration."""
+import os
 from flask import Flask
 from flask_cors import CORS
 from dotenv import load_dotenv
-import os
+from src.api.routes.auth_routes import bp as auth_bp
+from src.api.routes.ai_routes import bp as ai_bp
+from src.api.routes.learning_routes import bp as learning_bp
+from src.core.models.database import db
+from src.api.swagger import swagger_blueprint
 import logging
-from routes.auth_routes import bp as auth_bp
-from routes.ai_routes import bp as ai_bp
-from routes.learning_routes import bp as learning_bp
-from models.database import db
 
 # Configure logging
 logging.basicConfig(
@@ -16,24 +18,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def create_app():
+    """Create and configure the Flask application."""
     # Load environment variables
-    load_dotenv()  # This will load from the .env file in the current directory
     logger.info("Loading environment variables...")
-
+    # Force reload environment variables
+    load_dotenv(override=True)
+    logger.info(f"OpenAI API Key from env: {os.getenv('OPENAI_API_KEY')[:10]}...")
+    
     app = Flask(__name__)
     
     # Configure CORS with proper preflight handling
     CORS(app, 
-         resources={r"/api/*": {
-             "origins": ["http://localhost:5177", "http://127.0.0.1:5177"],
+         resources={r"/*": {
+             "origins": ["http://localhost:5177", "http://127.0.0.1:5177", "http://localhost:5000", "http://127.0.0.1:5000"],
              "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-             "allow_headers": ["Content-Type", "Authorization", "Access-Control-Allow-Credentials"],
+             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
              "supports_credentials": True,
              "expose_headers": ["Content-Type", "Authorization"],
              "max_age": 600  # Cache preflight requests for 10 minutes
          }},
          supports_credentials=True
     )
+
+    # Add CORS headers to all responses
+    @app.after_request
+    def after_request(response):
+        response.headers.add('Access-Control-Allow-Origin', 'http://localhost:5177')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With,Accept,Origin')
+        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+        response.headers.add('Access-Control-Allow-Credentials', 'true')
+        return response
 
     # Get the absolute path to the database file
     db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'instance', 'app.db')
@@ -42,7 +56,8 @@ def create_app():
     # Required configuration
     required_env_vars = [
         'SECRET_KEY',
-        'OPENAI_API_KEY'
+        'OPENAI_API_KEY',
+        'YOUTUBE_API_KEY'
     ]
     
     missing_vars = [var for var in required_env_vars if not os.getenv(var)]
@@ -55,7 +70,8 @@ def create_app():
         SQLALCHEMY_DATABASE_URI=f'sqlite:///{db_path}',
         SQLALCHEMY_TRACK_MODIFICATIONS=False,
         SECRET_KEY=os.getenv('SECRET_KEY').strip(),
-        OPENAI_API_KEY=os.getenv('OPENAI_API_KEY').strip()
+        OPENAI_API_KEY=os.getenv('OPENAI_API_KEY').strip(),
+        YOUTUBE_API_KEY=os.getenv('YOUTUBE_API_KEY').strip()
     )
     
     # Initialize extensions
@@ -70,6 +86,7 @@ def create_app():
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(ai_bp, url_prefix='/api/ai')
     app.register_blueprint(learning_bp, url_prefix='/api/learning')
+    app.register_blueprint(swagger_blueprint)
     
     # Log configuration (safely)
     logger.info("App configuration loaded")

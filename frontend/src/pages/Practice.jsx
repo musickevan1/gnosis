@@ -46,12 +46,13 @@ const Practice = () => {
 
     setLoading(true);
     try {
-      const response = await fetch('/api/ai/generate-quiz', {
+      const response = await fetch('http://127.0.0.1:5000/api/ai/generate-quiz', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${user.token}`,
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
         },
+        credentials: 'include',
         body: JSON.stringify({
           topic: selectedTopic,
           difficulty: difficulty,

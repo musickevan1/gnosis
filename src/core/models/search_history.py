@@ -1,25 +1,28 @@
+"""Search history model."""
 from datetime import datetime
-from models.database import db
+from src.core.models.database import db
 
 class SearchHistory(db.Model):
+    """Search history model."""
+    
     __tablename__ = 'search_history'
     
     id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    topic = db.Column(db.String(255), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    topic = db.Column(db.String(200), nullable=False)
     difficulty = db.Column(db.String(50))
-    subject_type = db.Column(db.String(50))
-    lesson_content = db.Column(db.Text)
-    quiz_content = db.Column(db.Text)
+    content = db.Column(db.Text)
+    content_type = db.Column(db.String(50))  # 'lesson' or 'quiz'
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
+    
     def to_dict(self):
+        """Convert to dictionary."""
         return {
             'id': self.id,
+            'user_id': self.user_id,
             'topic': self.topic,
             'difficulty': self.difficulty,
-            'subject_type': self.subject_type,
-            'lesson_content': self.lesson_content,
-            'quiz_content': self.quiz_content,
-            'created_at': self.created_at.isoformat()
+            'content': self.content,
+            'content_type': self.content_type,
+            'created_at': self.created_at.isoformat() if self.created_at else None
         }

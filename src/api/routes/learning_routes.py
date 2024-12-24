@@ -1,60 +1,40 @@
+"""Learning routes."""
 from flask import Blueprint, request, jsonify
-from models.user import User, Progress, db
-from datetime import datetime
-from functools import wraps
-from jose import jwt
-import os
+from src.core.models.user import User, Progress
+from src.core.models.search_history import SearchHistory
+from src.core.models.database import db
+from src.core.utils.auth import token_required
 
-bp = Blueprint('learning', __name__)
+bp = Blueprint('learning', __name__, url_prefix='/api/learning')
 
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization')
-        if not token:
-            return jsonify({"error": "Token is missing"}), 401
-        
-        try:
-            token = token.split()[1]  # Remove 'Bearer ' prefix
-            data = jwt.decode(token, os.getenv('SECRET_KEY'), algorithms=['HS256'])
-            current_user = User.query.get(data['user_id'])
-        except:
-            return jsonify({"error": "Invalid token"}), 401
-            
-        return f(current_user, *args, **kwargs)
-    return decorated
-
-@bp.route('/api/learning/progress', methods=['POST'])
+@bp.route('/history', methods=['GET'])
 @token_required
-def save_progress(current_user):
+def get_history(current_user_id):
+    """Get user's search history."""
+    history = SearchHistory.query.filter_by(user_id=current_user_id).all()
+    return jsonify([h.to_dict() for h in history]), 200
+
+@bp.route('/progress', methods=['GET'])
+@token_required
+def get_progress(current_user_id):
+    """Get user's learning progress."""
+    progress = Progress.query.filter_by(user_id=current_user_id).all()
+    return jsonify([p.to_dict() for p in progress]), 200
+
+@bp.route('/progress', methods=['POST'])
+@token_required
+def update_progress(current_user_id):
+    """Update user's learning progress."""
     data = request.get_json()
+    if not data or not data.get('topic') or not data.get('score'):
+        return jsonify({'error': 'Missing required fields'}), 400
     
     progress = Progress(
-        user_id=current_user.id,
+        user_id=current_user_id,
         topic=data['topic'],
-        score=data.get('score'),
-        time_spent=data.get('time_spent'),
-        difficulty_level=data.get('difficulty_level'),
-        feedback=data.get('feedback')
+        score=data['score']
     )
-    
     db.session.add(progress)
     db.session.commit()
     
-    return jsonify({"message": "Progress saved successfully"}), 201
-
-@bp.route('/api/learning/progress', methods=['GET'])
-@token_required
-def get_progress(current_user):
-    progress = Progress.query.filter_by(user_id=current_user.id).all()
-    
-    return jsonify({
-        "progress": [{
-            "topic": p.topic,
-            "score": p.score,
-            "completed_at": p.completed_at.isoformat(),
-            "time_spent": p.time_spent,
-            "difficulty_level": p.difficulty_level,
-            "feedback": p.feedback
-        } for p in progress]
-    })
+    return jsonify(progress.to_dict()), 201

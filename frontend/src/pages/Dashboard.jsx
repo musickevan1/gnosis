@@ -346,12 +346,13 @@ const Dashboard = () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('http://localhost:5000/api/ai/generate-lesson', {
+      const response = await fetch('http://127.0.0.1:5000/api/ai/generate-lesson', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
+        credentials: 'include',
         body: JSON.stringify({ topic, difficulty })
       });
 
@@ -377,12 +378,13 @@ const Dashboard = () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch('http://localhost:5000/api/ai/generate-quiz', {
+      const response = await fetch('http://127.0.0.1:5000/api/ai/generate-quiz', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         },
+        credentials: 'include',
         body: JSON.stringify({ 
           topic, 
           difficulty,
@@ -412,7 +414,7 @@ const Dashboard = () => {
     setVideoData(null);
     
     try {
-      const response = await fetch('http://localhost:5000/api/ai/search-video', {
+      const response = await fetch('http://127.0.0.1:5000/api/ai/search-video', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,10 +1,12 @@
-from flask import Blueprint, request, jsonify, current_app
-from models.user import User, db
+from flask import Blueprint, request, jsonify
+from src.core.models.user import User, db
+from src.core.utils.auth import token_required, create_token
 from datetime import datetime, timedelta
-from jose import jwt
 import os
 import logging
 from functools import wraps
+import jwt
+from flask import current_app
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,7 +28,7 @@ def token_required(f):
         
         try:
             if not token.startswith('Bearer '):
-                raise jwt.JWTError("Invalid token format")
+                raise jwt.InvalidTokenError("Invalid token format")
                 
             token = token.split()[1]
             data = jwt.decode(
@@ -39,17 +41,18 @@ def token_required(f):
             if not current_user:
                 raise ValueError("User not found")
                 
+            return f(current_user, *args, **kwargs)
+                
         except jwt.ExpiredSignatureError:
             logger.warning("Expired token used")
             return jsonify({"error": "Token has expired"}), 401
-        except jwt.JWTError as e:
+        except jwt.InvalidTokenError as e:
             logger.warning(f"JWT validation failed: {str(e)}")
             return jsonify({"error": "Invalid token"}), 401
         except Exception as e:
             logger.error(f"Token validation error: {str(e)}")
-            return jsonify({"error": "Token validation failed"}), 401
+            return jsonify({"error": "Authentication failed"}), 401
             
-        return f(current_user, *args, **kwargs)
     return decorated
 
 @bp.route('/register', methods=['POST', 'OPTIONS'])
@@ -125,15 +128,15 @@ def login():
         logger.info("Processing login request")
         
         # Validate required fields
-        if not all(k in data for k in ['email', 'password']):
-            return jsonify({"error": "Missing email or password"}), 400
+        if not data or not data.get('username') or not data.get('password'):
+            return jsonify({'error': 'Missing username or password'}), 400
             
-        user = User.query.filter_by(email=data['email']).first()
+        user = User.query.filter_by(username=data['username']).first()
         if not user:
-            return jsonify({"error": "Invalid email or password"}), 401
+            return jsonify({'error': 'Invalid username or password'}), 401
             
         if not user.check_password(data['password']):
-            return jsonify({"error": "Invalid email or password"}), 401
+            return jsonify({'error': 'Invalid username or password'}), 401
             
         # Update last login
         user.last_login = datetime.utcnow()
@@ -204,16 +207,20 @@ def check_availability():
 @bp.route('/me', methods=['GET', 'OPTIONS'])
 @token_required
 def get_current_user(current_user):
+    """Get current user information."""
     if request.method == 'OPTIONS':
         return jsonify({"message": "OK"}), 200
         
     try:
+        if not current_user:
+            return jsonify({"error": "User not found"}), 404
+            
         return jsonify({
             "id": current_user.id,
             "username": current_user.username,
             "email": current_user.email,
             "last_login": current_user.last_login.isoformat() if current_user.last_login else None
-        })
+        }), 200
     except Exception as e:
         logger.error(f"Error fetching user data: {str(e)}")
         return jsonify({"error": "Failed to fetch user data"}), 500

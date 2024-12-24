@@ -1,20 +1,18 @@
+"""AI routes for generating lessons and quizzes."""
 from flask import Blueprint, request, jsonify, current_app
+from src.core.models.search_history import SearchHistory
+from src.core.models.database import db
+from src.core.utils.openai_client import get_openai_response
+from src.api.routes.auth_routes import token_required
 import os
-from functools import wraps
-from jose import jwt
-from models.user import User
-from models.database import db
-from datetime import datetime
 import logging
 import requests
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from models.search_history import SearchHistory
 import json
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import re
-from openai import OpenAI
 import time
 
 # Configure logging
@@ -35,6 +33,7 @@ MAX_TOPIC_LENGTH = 200
 MAX_ANSWER_LENGTH = 1000
 
 def validate_input(topic=None, difficulty=None, answer=None):
+    """Validate input parameters."""
     errors = []
     
     if topic is not None and (not isinstance(topic, str) or len(topic) > MAX_TOPIC_LENGTH):
@@ -48,83 +47,33 @@ def validate_input(topic=None, difficulty=None, answer=None):
             
     return errors
 
-def get_openai_response(messages):
-    api_key = current_app.config.get('OPENAI_API_KEY')
-    
-    if not api_key:
-        logger.error("Missing OpenAI API key")
-        raise ValueError("Missing OpenAI API key configuration")
-
-    logger.info("Initializing OpenAI client...")
-    try:
-        client = OpenAI(
-            api_key=api_key
-        )
-
-        # Create an Assistant
-        assistant = client.beta.assistants.create(
-            name="AI Learning Companion",
-            instructions="You are a knowledgeable tutor helping students learn various subjects.",
-            model="gpt-3.5-turbo"
-        )
-
-        # Create a Thread
-        thread = client.beta.threads.create()
-
-        # Add Message to Thread
-        message = client.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=messages[-1]["content"]  # Get the last message from the messages list
-        )
-
-        # Run the Assistant
-        run = client.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=assistant.id
-        )
-
-        # Wait for completion
-        while True:
-            run = client.beta.threads.runs.retrieve(
-                thread_id=thread.id,
-                run_id=run.id
-            )
-            if run.status == 'completed':
-                break
-            elif run.status in ['failed', 'cancelled', 'expired']:
-                raise ValueError(f"Assistant run failed with status: {run.status}")
-            time.sleep(1)  # Wait before checking again
-
-        # Get the response
-        messages = client.beta.threads.messages.list(thread_id=thread.id)
-        response = messages.data[0].content[0].text.value
-
-        # Clean up
-        client.beta.assistants.delete(assistant_id=assistant.id)
-
-        return response
-
-    except Exception as e:
-        logger.error(f"OpenAI API request failed: {str(e)}")
-        raise ValueError("Failed to get response from OpenAI API") from e
-
 def get_subject_type(topic):
-    categories = {
-        'math': ['calculus', 'algebra', 'geometry', 'mathematics', 'trigonometry', 'statistics'],
-        'science': ['physics', 'chemistry', 'biology', 'astronomy', 'geology'],
-        'practical': ['cooking', 'baking', 'gardening', 'woodworking', 'crafts', 'diy', 'biking', 'sports'],
-        'technology': ['programming', 'coding', 'computer', 'software', 'hardware', 'networking'],
-        'language': ['english', 'spanish', 'french', 'grammar', 'writing', 'literature'],
-        'arts': ['music', 'painting', 'drawing', 'photography', 'design'],
-        'business': ['economics', 'finance', 'marketing', 'management', 'accounting']
-    }
-    
-    topic_lower = topic.lower()
-    for category, keywords in categories.items():
-        if any(keyword in topic_lower for keyword in keywords):
-            return category
-    return 'general'
+    """Determine the subject type from the topic."""
+    topic = topic.lower()
+    if any(word in topic for word in ['math', 'algebra', 'calculus', 'geometry']):
+        return 'math'
+    elif any(word in topic for word in ['physics', 'chemistry', 'biology']):
+        return 'science'
+    elif any(word in topic for word in ['history', 'geography', 'economics']):
+        return 'social_studies'
+    elif any(word in topic for word in ['python', 'java', 'programming', 'code']):
+        return 'programming'
+    else:
+        return 'general'
+
+def get_lesson_prompt(topic, difficulty, subject_type):
+    """Get the prompt for lesson generation."""
+    return [
+        {"role": "system", "content": f"You are an expert {subject_type} tutor. Create a detailed lesson about {topic} for {difficulty} level students."},
+        {"role": "user", "content": f"Please create a lesson about {topic} that is suitable for {difficulty} level students. Include examples and explanations."}
+    ]
+
+def get_quiz_prompt(topic, difficulty, subject_type):
+    """Get the prompt for quiz generation."""
+    return [
+        {"role": "system", "content": f"You are an expert {subject_type} tutor. Create a quiz about {topic} for {difficulty} level students. Return the response in JSON format with the following structure: {{\"questions\": [{{\"question\": \"...\", \"options\": [\"A\", \"B\", \"C\", \"D\"], \"correct_answer\": \"...\", \"explanation\": \"...\"}}]}}"},
+        {"role": "user", "content": f"Please create a quiz about {topic} that is suitable for {difficulty} level students. Include 5 multiple choice questions with answers. Format your response as a valid JSON object."}
+    ]
 
 def format_latex_content(content):
     if not content:
@@ -250,209 +199,117 @@ def format_quiz_content(content):
         logger.error(f"Error formatting quiz content: {str(e)}")
         return content.strip()
 
-def get_lesson_prompt(topic, difficulty, subject_type):
-    base_prompt = f"""Create a {difficulty} level lesson about {topic}. 
-    Format the lesson with the following structure:
-    1. Use '**' for bold text to emphasize key points and terms
-    2. Use proper markdown formatting:
-       - Headers with '#' for sections
-       - Bullet points with '-' for lists
-       - Numbered lists for steps
-    3. For mathematical content:
-       - Use $ for inline math
-       - Use $$ for display math
-       - Format fractions as \\frac{{numerator}}{{denominator}}
-       - Format exponents as ^{{power}}
-       - Format square roots as \\sqrt{{x}}
-    4. Organize the content with clear sections:
-       - Introduction
-       - Key Concepts (with bold terms)
-       - Detailed Explanation
-       - Examples
-    5. DO NOT include practice problems at the end
-    6. DO NOT use backslashes except in LaTeX commands
-    """
-    
-    if subject_type == 'math':
-        return base_prompt + """
-        Include step-by-step solutions with clear explanations.
-        Format all mathematical expressions using LaTeX.
-        Make sure to bold key mathematical terms and concepts.
-        """
-    elif subject_type == 'programming':
-        return base_prompt + """
-        Include code examples in proper markdown code blocks.
-        Bold important programming concepts and terms.
-        Use proper indentation in code examples.
-        """
-    elif subject_type == 'science':
-        return base_prompt + """
-        Include scientific terms in bold.
-        Use LaTeX for any mathematical formulas.
-        Clearly explain scientific concepts with examples.
-        """
-    else:
-        return base_prompt + """
-        Focus on clear explanations with key terms in bold.
-        Use examples to illustrate concepts.
-        """
-
-def get_quiz_prompt(topic, difficulty, subject_type):
-    base_prompt = f"Create 5 {difficulty} level quiz questions about {topic}. "
-    
-    if subject_type == 'math':
-        return base_prompt + """
-        Include calculation problems. Use LaTeX for equations. Provide answers.
-        """
-    elif subject_type == 'programming':
-        return base_prompt + """
-        Include coding problems. Show expected outputs. Provide solutions.
-        """
-    elif subject_type == 'science':
-        return base_prompt + """
-        Mix conceptual and numerical problems. Provide answers.
-        """
-    else:
-        return base_prompt + """
-        Focus on key concepts. Provide clear answers.
-        """
-
-def generate_lesson_content(topic, difficulty, subject_type):
-    try:
-        prompt = get_lesson_prompt(topic, difficulty, subject_type)
-        response = get_openai_response([
-            {"role": "system", "content": "You are a knowledgeable tutor."},
-            {"role": "user", "content": prompt}
-        ])
-        return format_lesson_content(response)
-    except Exception as e:
-        logger.error(f"Error generating lesson content: {str(e)}")
-        raise
-
-def generate_quiz_content(topic, difficulty, subject_type):
-    try:
-        prompt = get_quiz_prompt(topic, difficulty, subject_type)
-        response = get_openai_response([
-            {"role": "system", "content": "You are a knowledgeable quiz creator."},
-            {"role": "user", "content": prompt}
-        ])
-        return format_quiz_content(response)
-    except Exception as e:
-        logger.error(f"Error generating quiz content: {str(e)}")
-        raise
-
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization')
-        if not token:
-            logger.warning("Token missing in request")
-            return jsonify({"error": "Token is missing"}), 401
-        
-        try:
-            if not token.startswith('Bearer '):
-                raise jwt.JWTError("Invalid token format")
-                
-            token = token.split()[1]
-            data = jwt.decode(
-                token, 
-                os.getenv('SECRET_KEY', 'default-secret-key'), 
-                algorithms=['HS256']
-            )
-            
-            current_user = User.query.get(data['user_id'])
-            if not current_user:
-                raise ValueError("User not found")
-                
-        except jwt.ExpiredSignatureError:
-            logger.warning("Expired token used")
-            return jsonify({"error": "Token has expired"}), 401
-        except jwt.JWTError as e:
-            logger.warning(f"JWT validation failed: {str(e)}")
-            return jsonify({"error": "Invalid token"}), 401
-        except Exception as e:
-            logger.error(f"Token validation error: {str(e)}")
-            return jsonify({"error": "Token validation failed"}), 401
-            
-        return f(current_user, *args, **kwargs)
-    return decorated
-
 @bp.route('/generate-lesson', methods=['POST'])
 @token_required
 @limiter.limit("10 per minute")
 def generate_lesson(current_user):
+    """Generate a lesson based on the given topic and difficulty."""
+    data = request.get_json()
+    
+    # Validate input
+    if not data or not data.get('topic') or not data.get('difficulty'):
+        logger.error(f"Missing required fields in request data: {data}")
+        return jsonify({"error": "Missing required fields"}), 400
+        
+    topic = data['topic']
+    difficulty = data['difficulty']
+    
+    # Validate input parameters
+    errors = validate_input(topic=topic, difficulty=difficulty)
+    if errors:
+        logger.error(f"Input validation errors: {errors}")
+        return jsonify({"errors": errors}), 400
+    
     try:
-        data = request.get_json()
-        logger.info("Received generate lesson request")
+        # Get subject type for specialized prompts
+        subject_type = get_subject_type(topic)
+        logger.info(f"Subject type determined: {subject_type}")
         
-        topic = data.get('topic')
-        difficulty = data.get('difficulty', 'intermediate')
+        # Generate lesson content
+        prompt = get_lesson_prompt(topic, difficulty, subject_type)
+        logger.info(f"Generated lesson prompt: {prompt}")
         
-        if not topic:
-            return jsonify({'error': 'Topic is required'}), 400
-
-        subject_type = get_subject_type(topic.lower())
+        lesson_content = get_openai_response(prompt)
+        logger.info(f"Received lesson content (first 200 chars): {lesson_content[:200]}")
         
-        logger.info(f"Generating lesson for topic: {topic}, difficulty: {difficulty}")
-        
-        try:
-            lesson_content = generate_lesson_content(topic, difficulty, subject_type)
+        if not lesson_content:
+            logger.error("Empty lesson content received from OpenAI")
+            return jsonify({"error": "Failed to generate lesson content"}), 500
             
-            if not lesson_content:
-                logger.error("Empty response from OpenAI API")
-                return jsonify({'error': 'Failed to generate lesson content'}), 500
-
-            try:
-                search_history = SearchHistory(
-                    user_id=current_user.id,
-                    topic=topic,
-                    difficulty=difficulty,
-                    subject_type=subject_type,
-                    lesson_content=lesson_content
-                )
-                db.session.add(search_history)
-                db.session.commit()
-
-                return jsonify({
-                    'lesson': lesson_content,
-                    'subject_type': subject_type,
-                    'history_id': search_history.id
-                })
-            except Exception as db_error:
-                logger.error(f"Database error: {str(db_error)}")
-                db.session.rollback()
-                return jsonify({'error': 'Error saving lesson to database'}), 500
-
-        except Exception as e:
-            logger.error(f"Error generating lesson content: {str(e)}")
-            return jsonify({'error': str(e)}), 500
-
+        # Save to search history
+        try:
+            history = SearchHistory(
+                user_id=current_user.id,
+                topic=topic,
+                difficulty=difficulty,
+                content_type='lesson',
+                content=lesson_content
+            )
+            db.session.add(history)
+            db.session.commit()
+            logger.info(f"Lesson saved to history with ID: {history.id}")
+        except Exception as db_error:
+            logger.error(f"Database error saving lesson: {str(db_error)}")
+            # Continue even if history save fails
+        
+        return jsonify({
+            "lesson": format_lesson_content(lesson_content),
+            "history_id": history.id if 'history' in locals() else None
+        }), 200
+        
     except Exception as e:
-        logger.error(f"Error processing request: {str(e)}")
-        return jsonify({'error': 'Internal server error'}), 500
+        logger.error(f"Error generating lesson: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.exception("Full traceback:")
+        return jsonify({"error": str(e)}), 500
 
 @bp.route('/generate-quiz', methods=['POST'])
 @token_required
 @limiter.limit("20 per hour")
 def generate_quiz(current_user):
+    """Generate a quiz based on the given topic and difficulty."""
     try:
         data = request.get_json()
         if not data:
+            logger.error("No JSON data provided in quiz request")
             return jsonify({'error': 'No JSON data provided'}), 400
             
         topic = data.get('topic')
+        if not topic:
+            logger.error("Missing topic in quiz request")
+            return jsonify({'error': 'Missing required field: topic'}), 400
+            
         difficulty = data.get('difficulty', 'intermediate')
         history_id = data.get('history_id')
         
+        logger.info(f"Generating quiz for topic: {topic}, difficulty: {difficulty}")
+        
         errors = validate_input(topic=topic, difficulty=difficulty)
         if errors:
+            logger.error(f"Quiz input validation errors: {errors}")
             return jsonify({'errors': errors}), 400
 
         subject_type = get_subject_type(topic)
-        quiz_content = generate_quiz_content(topic, difficulty, subject_type)
+        logger.info(f"Quiz subject type determined: {subject_type}")
+        
+        prompt = get_quiz_prompt(topic, difficulty, subject_type)
+        logger.info(f"Generated quiz prompt: {prompt}")
+        
+        try:
+            quiz_content = get_openai_response(prompt)
+            logger.info(f"Received quiz content (first 200 chars): {quiz_content[:200]}")
+        except Exception as openai_error:
+            logger.error(f"OpenAI API error: {str(openai_error)}")
+            logger.exception("Full OpenAI error traceback:")
+            return jsonify({'error': str(openai_error)}), 500
 
         try:
             quiz_json = json.loads(quiz_content)
+            logger.info("Successfully parsed quiz JSON")
+            
+            if 'questions' not in quiz_json:
+                logger.error(f"Invalid quiz format - missing 'questions' key. Content: {quiz_content}")
+                return jsonify({'error': 'Invalid quiz format - missing questions'}), 500
             
             if subject_type in ['math', 'science']:
                 for question in quiz_json['questions']:
@@ -461,63 +318,55 @@ def generate_quiz(current_user):
                     question['correct_answer'] = format_latex_content(question['correct_answer'])
                     if 'explanation' in question:
                         question['explanation'] = format_latex_content(question['explanation'])
-
-            if history_id:
-                search_history = SearchHistory.query.get(history_id)
-                if search_history and search_history.user_id == current_user.id:
-                    search_history.quiz_content = json.dumps(quiz_json)
-                else:
-                    return jsonify({'error': 'Invalid history ID'}), 400
-            else:
-                search_history = SearchHistory(
+            
+            # Save to search history
+            try:
+                history = SearchHistory(
                     user_id=current_user.id,
                     topic=topic,
                     difficulty=difficulty,
-                    subject_type=subject_type,
-                    quiz_content=json.dumps(quiz_json)
+                    content_type='quiz',
+                    content=json.dumps(quiz_json)
                 )
-                db.session.add(search_history)
+                db.session.add(history)
+                db.session.commit()
+                logger.info(f"Quiz saved to history with ID: {history.id}")
+            except Exception as db_error:
+                logger.error(f"Database error saving quiz: {str(db_error)}")
+                # Continue even if history save fails
             
-            db.session.commit()
-            logger.info(f"Generated quiz for topic '{topic}' with difficulty '{difficulty}'")
-
             return jsonify({
-                **quiz_json,
-                'subject_type': subject_type,
-                'history_id': search_history.id
-            })
-
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing error: {str(e)}\nRaw content: {quiz_content}")
-            return jsonify({'error': 'Failed to parse quiz content', 'details': str(e)}), 500
-
+                "questions": quiz_json['questions'],
+                "history_id": history.id if 'history' in locals() else None
+            }), 200
+            
+        except json.JSONDecodeError as json_error:
+            logger.error(f"JSON parsing error: {str(json_error)}")
+            logger.error(f"Invalid JSON content: {quiz_content}")
+            return jsonify({'error': 'Invalid quiz format - failed to parse JSON'}), 500
+            
     except Exception as e:
-        logger.error(f"Error in generate_quiz: {str(e)}")
-        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+        logger.error(f"Error generating quiz: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        logger.exception("Full traceback:")
+        return jsonify({'error': str(e)}), 500
 
 @bp.route('/search-history', methods=['GET'])
 @token_required
 def get_search_history(current_user):
+    """Get search history for the current user."""
     try:
-        topic = request.args.get('topic')
-        subject_type = request.args.get('subject_type')
-        
-        query = SearchHistory.query.filter_by(user_id=current_user.id)
-        
-        if topic:
-            query = query.filter(SearchHistory.topic.ilike(f'%{topic}%'))
-        if subject_type:
-            query = query.filter_by(subject_type=subject_type)
-            
-        history = query.order_by(SearchHistory.created_at.desc()).all()
-        
-        return jsonify({
-            'history': [item.to_dict() for item in history]
-        })
-        
+        history = SearchHistory.query.filter_by(user_id=current_user.id).order_by(SearchHistory.created_at.desc()).all()
+        return jsonify([{
+            'id': item.id,
+            'topic': item.topic,
+            'difficulty': item.difficulty,
+            'content_type': item.content_type,
+            'created_at': item.created_at.isoformat()
+        } for item in history]), 200
     except Exception as e:
-        logger.error(f"Error getting search history: {str(e)}")
-        return jsonify({'error': 'Failed to get search history'}), 500
+        logger.error(f"Error retrieving search history: {str(e)}")
+        return jsonify({'error': 'Failed to retrieve search history'}), 500
 
 @bp.route('/search-history/<int:history_id>', methods=['GET'])
 @token_required
@@ -583,10 +432,11 @@ def get_feedback(current_user):
         if errors:
             return jsonify({'errors': errors}), 400
         
-        response = get_openai_response([
+        prompt = [
             {"role": "system", "content": "You are an encouraging tutor providing constructive feedback."},
             {"role": "user", "content": f"Compare this answer: '{answer}' with the correct answer: '{correct_answer}'. Provide constructive feedback."}
-        ])
+        ]
+        response = get_openai_response(prompt)
         feedback_content = response
         
         return jsonify({
@@ -607,7 +457,7 @@ def search_video(current_user):
         if not topic:
             return jsonify({"error": "Topic is required"}), 400
             
-        youtube_api_key = current_app.config.get('YOUTUBE_API_KEY')
+        youtube_api_key = current_app.config['YOUTUBE_API_KEY']
         if not youtube_api_key:
             return jsonify({
                 "error": "YouTube API key not configured. Please add YOUTUBE_API_KEY to your environment variables."
@@ -656,9 +506,10 @@ def search_video(current_user):
 @token_required
 def test_api_key(current_user):
     try:
-        response = get_openai_response([
+        prompt = [
             {"role": "user", "content": "Hello!"}
-        ])
+        ]
+        response = get_openai_response(prompt)
         return jsonify({'status': 'success', 'message': 'API key is valid'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
