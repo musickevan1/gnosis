@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+      - /app/venv  # Exclude venv directory
+    environment:
+      - FLASK_APP=app.py
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - PYTHONUNBUFFERED=1
+      - FRONTEND_URL=http://localhost:5177
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    env_file:
+      - .env
+    command: python -m flask run --host=0.0.0.0 --port=5000 --reload
+    networks:
+      - app-network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5177:5177"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # Exclude node_modules
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:5000
+    depends_on:
+      - backend
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
