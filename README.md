@@ -113,8 +113,8 @@ OPENAI_API_KEY=your_openai_api_key
 docker-compose up --build
 ```
 2. Access the application:
-   - Frontend: http://localhost:5177
-   - Backend API: http://localhost:5000
+   - Frontend: http://localhost:5177 (Example port, change to existing port)
+   - Backend API: http://localhost:5000 (Example port, change to existing port)
 
 ### Local Development Setup
 1. Backend Setup:
